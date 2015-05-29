@@ -1,0 +1,315 @@
+---
+title: "Machine Learning Project" 
+author: "Druce Vertes - drucev at sign gmail dot com"
+date: "Wednesday, May 27, 2015"
+output: html_document
+---
+
+- Practical Machine Learning 
+- Coursera / Johns Hopkins / Data Science Specialization
+
+# Classify Fitbit data for correct form in bicep curls
+
+- Data file with ~160 data columns collected from Fitbit wearable devices - see http://groupware.les.inf.puc-rio.br/har
+- Wearers performed bicep curls under supervision of instructor
+- Instructor classified observation as correct or 4 types of incorrect form (5 classifications)
+- Train a classifier to learn which observations are correct form
+
+# Load libraries
+
+
+```{r}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(arm)
+library(MASS)
+library(Matrix)
+library(lme4)
+library(Rcpp)
+library(caTools)
+library(randomForest)
+library(gbm)
+library(nnet)
+library(kernlab)
+library(survival)
+library(parallel)
+library(splines)
+library(plyr)
+
+```
+
+# Load data
+
+
+```{r}
+setwd("C:/Users/druce/R/MLproject2")
+
+# download data
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv")
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv")
+
+training<-read.csv('pml-training.csv',na.strings = c("NA","#DIV/0!", ""))
+testing<-read.csv('pml-testing.csv',na.strings = c("NA","#DIV/0!", ""))
+
+# set random seed for reproducibility
+# sample(1:10000, 1)
+set.seed(1105)
+
+```
+# Explore data
+
+
+```{r}
+table(training$classe)
+```
+# Histogram
+
+
+```{r}
+qplot(training$classe, geom="histogram")
+```
+
+# Clean Data
+
+
+Find columns with mostly NAs
+```{r}
+countMissing <- function(mycol) {
+    return (sum(is.na(training[, mycol]))/ nrow(training))
+}
+countNAs <- data.frame(countNA=sapply(colnames(training), countMissing))
+subset(countNAs, countNAs$countNA > 0.5)
+
+```
+# Omit columns with mostly NAs
+
+
+- We see a number of summary columns with 97% of data NA
+- We can safely delete them since we want to predict on individual observations
+
+```{r}
+colsToDeleteNA <- countNAs$countNA > 0.9
+training <- training[, !colsToDeleteNA]
+
+```
+
+# Identify low-information columns
+
+
+```{r}
+nearzero <- nearZeroVar(training, saveMetrics=TRUE)
+nearzero[nearzero$nzv==TRUE, ]
+```
+
+# Delete descriptive columns
+
+
+```{r}
+# first 7 columns are descriptive, no predictive value and can be omitted
+colsToDeleteLabels <- names(training)[1:7]
+training <- training[,8:60]
+```
+
+# Correlation analysis
+
+
+```{r}
+# correlation analysis
+mycorr <- cor(training[-53])
+hicorr <- findCorrelation(mycorr, cutoff=0.8, verbose=FALSE)
+colnames(training)[hicorr]
+corrmatrix <- matrix(mycorr[hicorr,hicorr], nrow=12, ncol=12, dimnames=list(colnames(training)[hicorr]))
+colnames(corrmatrix)<- colnames(training)[hicorr]
+corrmatrix[(corrmatrix > -0.8 & corrmatrix < 0.8) ] <- NA
+```
+# Correlation analysis - output
+
+```{r}
+# correlation analysis
+corrmatrix
+```
+
+# Correlation analysis - conclusion
+
+
+- We could delete highly correlated columns and lose a little signal
+- We could do PCA decomposition for dimensionality reduction and orthogonality
+- Only 12 columns, let's try to classify with and without PCA and see which works better
+
+# Explore PCA decomposition
+
+
+```{r}
+# PCA analysis
+pcaframe<-training[-53]
+preProc1 <- preProcess(pcaframe, method = c("center", "scale","pca"))
+preProc1
+# look at contributors to 1st PCA component
+head(sort(preProc1$rotation[,1]))
+head(sort(-preProc1$rotation[,1]))
+
+```
+# Plot some significant variables v. each other
+
+```{r}
+plotcolor <- data.frame(classe=training$classe)
+plotcolor$classe2 <- ""
+plotcolor[plotcolor$classe=="A", "classe2"] <- "red"
+plotcolor[plotcolor$classe=="B", "classe2"] <- "green"
+plotcolor[plotcolor$classe=="C", "classe2"] <- "blue"
+plotcolor[plotcolor$classe=="D", "classe2"] <- "yellow"
+plotcolor[plotcolor$classe=="E", "classe2"] <- "black"
+ 
+qplot(magnet_dumbbell_z, roll_belt, data=training, color=plotcolor[, "classe2"])
+```
+
+```{r}
+qplot(accel_belt_y, roll_arm, data=training, color=plotcolor[, "classe2"])
+```
+
+# Plot top 2 PCA components v. each other
+
+```{r}
+PCAtraining <- predict(preProc1, pcaframe)
+qplot(PC1, PC2, data=PCAtraining, col=plotcolor[, "classe2"])
+```
+
+# PCA - Conclusion
+
+
+- 25 components capture 95% of variation from original 52
+- The variables show some promising grouping
+- PCA components group the observations into 5 clear groups 
+- But they don't line up with the variable we want to predict (colors)
+- It's as if it's separating individuals or another variable, not good/bad form
+
+
+# Train classifiers - set up a loop with various methods
+
+
+- Loop through methods
+- Train on raw data, and preprocessing with PCA 
+- K-fold cross-validation with 10 folds (default)
+- Run for ~4 hours, store results
+
+```{r}
+myMethods <- c("rf", "gbm", "LogitBoost", "nnet", "svmLinear", "svmRadial")
+#myMethods <- c("rf")
+trc_cv = trainControl(method="cv")
+runModel <- function(mxpar) {
+    return (train(classe ~ ., data=training, method=mxpar, trControl=trc_cv, verbose=FALSE))
+}
+
+runModelPCA <- function(mxpar) {
+    return (train(classe ~ ., data=training, method=mxpar, preProcess="pca", trControl=trc_cv, verbose=FALSE))
+}
+
+models <- list()
+modelLabels <- list()
+ACC <- list()
+KPP <- list()
+modelsStartTime <- list()
+
+mycount <- 0
+for (mx in myMethods) {
+    # set.seed(1105)     # if you want to always use same folds
+    # run model, store result
+
+    mycount <- mycount+1
+    modelsStartTime[[mycount]] <- Sys.time()    	   
+    print(sprintf ("Start %s : %s" , Sys.time(), mx))
+    models[[mycount]] <- runModel(mx)
+    modelLabels[[mycount]] <- models[[mycount]]$modelInfo$label
+    ACC[[mycount]] <- max(models[[mycount]]$results$Accuracy)
+    KPP[[mycount]] <- max(max(models[[mycount]]$results$Kappa))
+    print(models[[mycount]])
+
+    # PCA
+    mycount <- mycount+1
+    # set.seed(1105)     
+    modelsStartTime[[mycount]] <- Sys.time()    	   
+    print(sprintf ("Start %s : %s (PCA)" , Sys.time(), mx))
+    models[[mycount]] <- runModelPCA(mx)
+    modelLabels[[mycount]] <- sprintf("%s (PCA)", models[[mycount]]$modelInfo$label)
+    ACC[[mycount]] <- max(models[[mycount]]$results$Accuracy)
+    KPP[[mycount]] <- max(max(models[[mycount]]$results$Kappa))
+    print(models[[mycount]])
+   
+}
+modelsEndTime <- Sys.time()    	   
+modelsEndTime
+```
+# Compare performance
+
+```{r}
+performance <- cbind(modelLabels,ACC,KPP)
+performance
+```
+
+# Results
+- Random forest (rf) classifies correctly 99.5% of observations
+- PCA does not improve results, except neural net from ~40% to 60%
+- Hypothesis: In the case of neural net, dimensionality reduction helps the algorithm more than the information loss hurts, so accuracy goes from ~0.4 to 0.6
+
+# Variable importance
+
+```{r}
+RFclassifier <- models[[1]]
+varImp(RFclassifier)
+
+- Interesting to compare vs. PCA
+- A lot of overlap among top variables but some show a lot of variance but not much signal
+```
+
+# Plot top 3 random forest variables v. each other
+
+```{r}
+qplot(roll_belt, yaw_belt, data=training, col=plotcolor[, "classe2"])
+```
+
+```{r}
+qplot(roll_belt, magnet_dumbbell_z, data=training, col=plotcolor[, "classe2"])
+```
+
+```{r}
+qplot(yaw_belt, magnet_dumbbell_z, data=training, col=plotcolor[, "classe2"])
+```
+
+# Table of results from training set
+
+```{r}
+myPredict <- data.frame(prediction=predict(RFclassifier, training))
+myPredict$classe<-training$classe
+#table(myPredict)
+confusionMatrix(myPredict$prediction, myPredict$classe)
+
+```
+
+# Predict vs. test data
+```{r}
+testPrediction=predict(RFclassifier, newdata = testing)
+testPrediction
+```
+
+# Generate test output
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(testPrediction)
+```
+# Conclusion
+
+- Random forest performs very well, other methods (but not all) yield good results
+- We get 99.5% accuracy during cross-validation and 100% in-sample
+- Accuracy expected to be a little less than 99.5% on test data randomly held back from this experiment. 99.5% is an upper bound on a new similarly constructed experiment.
+- Without domain knowledge, we can't be sure how well these results will generalize
+- We can't rule out artifacts that allow us to classify correctly in sample but won't generalize out of sample.
+- For instance, different heights or styles of particpants, or a different instructor could impact accuracy.
+- As an example of an artifact, if good/bad form are serially correlated and the algorithm is able to take into account the sequence of data (not provided to rf here  but other otherwise non-predictive variables could be serially correlated), it won't perform as well on individual or randomly shuffled observations.

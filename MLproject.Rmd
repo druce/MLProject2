@@ -139,7 +139,7 @@ corrmatrix
 
 # Explore PCA decomposition
 
-
+preProcess(pcaframe, method = c("center", "scale","pca"))
 ```{r}
 # PCA analysis
 pcaframe<-training[-53]
@@ -153,26 +153,18 @@ head(sort(-preProc1$rotation[,1]))
 # Plot some significant variables v. each other
 
 ```{r}
-plotcolor <- data.frame(classe=training$classe)
-plotcolor$classe2 <- ""
-plotcolor[plotcolor$classe=="A", "classe2"] <- "red"
-plotcolor[plotcolor$classe=="B", "classe2"] <- "green"
-plotcolor[plotcolor$classe=="C", "classe2"] <- "blue"
-plotcolor[plotcolor$classe=="D", "classe2"] <- "yellow"
-plotcolor[plotcolor$classe=="E", "classe2"] <- "black"
- 
-qplot(magnet_dumbbell_z, roll_belt, data=training, color=plotcolor[, "classe2"])
+qplot(magnet_dumbbell_z, roll_belt, data=training, color=classe)
 ```
 
 ```{r}
-qplot(accel_belt_y, roll_arm, data=training, color=plotcolor[, "classe2"])
+qplot(accel_belt_y, roll_arm, data=training, color=classe)
 ```
 
 # Plot top 2 PCA components v. each other
 
 ```{r}
 PCAtraining <- predict(preProc1, pcaframe)
-qplot(PC1, PC2, data=PCAtraining, col=plotcolor[, "classe2"])
+qplot(PC1, PC2, data=PCAtraining, color=training$classe)
 ```
 
 # PCA - Conclusion
@@ -184,6 +176,16 @@ qplot(PC1, PC2, data=PCAtraining, col=plotcolor[, "classe2"])
 - But they don't line up with the variable we want to predict (colors)
 - It's as if it's separating individuals or another variable, not good/bad form
 
+# PCA - Conclusion 2
+
+- Plot vs. user names
+```{r}
+training2<-read.csv('pml-training.csv',na.strings = c("NA","#DIV/0!", ""))
+PCAtraining$user_name = training2$user_name
+qplot(PC1, PC2, data=PCAtraining, col=user_name)
+```
+
+- First 2 PCA components (capturing ~30% of variance) cluster pretty well by user_name, not by form
 
 # Train classifiers - set up a loop with various methods
 
@@ -217,7 +219,7 @@ for (mx in myMethods) {
     # run model, store result
 
     mycount <- mycount+1
-    modelsStartTime[[mycount]] <- Sys.time()    	   
+    modelsStartTime[[mycount]] <- Sys.time()         
     print(sprintf ("Start %s : %s" , Sys.time(), mx))
     models[[mycount]] <- runModel(mx)
     modelLabels[[mycount]] <- models[[mycount]]$modelInfo$label
@@ -258,22 +260,22 @@ performance
 RFclassifier <- models[[1]]
 varImp(RFclassifier)
 
+```
 - Interesting to compare vs. PCA
 - A lot of overlap among top variables but some show a lot of variance but not much signal
-```
 
 # Plot top 3 random forest variables v. each other
 
 ```{r}
-qplot(roll_belt, yaw_belt, data=training, col=plotcolor[, "classe2"])
+qplot(roll_belt, yaw_belt, data=training, col=classe)
 ```
 
 ```{r}
-qplot(roll_belt, magnet_dumbbell_z, data=training, col=plotcolor[, "classe2"])
+qplot(roll_belt, magnet_dumbbell_z, data=training, col=classe)
 ```
 
 ```{r}
-qplot(yaw_belt, magnet_dumbbell_z, data=training, col=plotcolor[, "classe2"])
+qplot(yaw_belt, magnet_dumbbell_z, data=training, col=classe)
 ```
 
 # Table of results from training set

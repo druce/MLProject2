@@ -137,7 +137,7 @@ qplot(roll_arm, roll_belt, data=training, color=plotcolor[, "classe2"])
 qplot(magnet_dumbbell_z, roll_belt, data=training, color=plotcolor[, "classe2"])
 qplot(pitch_forearm, yaw_belt, data=training, color=plotcolor[, "classe2"])
 
-# seems promising. try PCA
+# seems promising. plot PCA components
 PCAtraining <- predict(preProc1, pcaframe)
 qplot(PC1, PC2, data=PCAtraining, col=plotcolor[, "classe2"])
 
@@ -148,10 +148,17 @@ qplot(PC1, PC2, data=PCAtraining, col=plotcolor[, "classe2"])
 # would appear PCAs yields the amount of dimensionality reduction we want but not the classification we need from PCA1 and PCA2 anyway
 # like it's separating individual people, not good form/bad form
 
+# For grins, let's plot vs. user_name
+
+training2<-read.csv('pml-training.csv',na.strings = c("NA","#DIV/0!", ""))
+PCAtraining$user_name = training2$user_name
+qplot(PC1, PC2, data=PCAtraining, col=user_name)
+
 # train control <- cross-validation (use defaults = 10 k-folds)
 
 # this is if you want to train explicitly from PCA components
 #PCAtraining$classe <- training$classe
+
 
 #myMethods <- c("rf", "glm", "LogitBoost", "nnet", "gbm", "svmLinear", "svmRadial")
 #myMethods <- c("LogitBoost", "nnet", "rf", "gbm", "svmLinear", "svmRadial")
@@ -184,10 +191,16 @@ for (mx in myMethods) {
     KPP[[mycount]] <- retvals[[mycount]]$modelInfo$Kappa,
     print(retvals[[mycount]])
 
-    ## mycount <- mycount+1
-    ## set.seed(1105)     
-    ## retvals[[mycount]] <- runModelPCA(mx)
-    ## print(retvals[[mycount]])
+    # PCA
+    mycount <- mycount+1
+    # set.seed(1105)     
+    modelsStartTime[[mycount]] <- Sys.time()    	   
+    print(sprintf ("Start %s : %s (PCA)" , Sys.time(), mx))
+    models[[mycount]] <- runModelPCA(mx)
+    modelLabels[[mycount]] <- sprintf("%s (PCA)", models[[mycount]]$modelInfo$label)
+    ACC[[mycount]] <- max(models[[mycount]]$results$Accuracy)
+    KPP[[mycount]] <- max(max(models[[mycount]]$results$Kappa))
+    print(models[[mycount]])
    
 }
 

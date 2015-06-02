@@ -72,8 +72,8 @@ qplot(training$classe, geom="histogram")
 
 # Clean Data
 
+- Find columns with mostly NAs
 
-Find columns with mostly NAs
 ```{r}
 countMissing <- function(mycol) {
     return (sum(is.na(training[, mycol]))/ nrow(training))
@@ -139,7 +139,6 @@ corrmatrix
 
 # Explore PCA decomposition
 
-preProcess(pcaframe, method = c("center", "scale","pca"))
 ```{r}
 # PCA analysis
 pcaframe<-training[-53]
@@ -185,7 +184,28 @@ PCAtraining$user_name = training2$user_name
 qplot(PC1, PC2, data=PCAtraining, col=user_name)
 ```
 
+# Variable selection - discussion
 - First 2 PCA components (capturing ~30% of variance) cluster pretty well by user_name, not by form
+- So, should we add user_name to our list of predictors?
+- If the goal is to create an algorithm that can  predict on never-before-seen people, no.
+- Since 30% of variation is explained by people, we might need a lot more people to create a truly user-independent algorithm.
+- If the goal is to find a learning algorithm we can put into a device that learns about its user, it might make sense to include it.
+- Test set contains same user names as training set. 
+- If the goal is to get highest possible accuracy, we should include it.
+- If the goal is to get highest possible accuracy, could argue for including timestamp or sequence number, in case outcome is serially correlated.
+
+```{r}
+qplot(classe, num_window, data=training2, color = user_name)
+```
+
+
+- We can see timestamp is quite a good predictor of classe
+- Anyway, for grins, we'll include user_name, and we won't include timestamp or anything else.
+
+
+```{r}
+training$user_name <- training2$user_name
+```
 
 # Train classifiers - set up a loop with various methods
 
@@ -199,12 +219,13 @@ qplot(PC1, PC2, data=PCAtraining, col=user_name)
 myMethods <- c("rf", "gbm", "LogitBoost", "nnet", "svmLinear", "svmRadial")
 #myMethods <- c("rf")
 trc_cv = trainControl(method="cv")
+# center and scale for better performance on some methods
 runModel <- function(mxpar) {
-    return (train(classe ~ ., data=training, method=mxpar, trControl=trc_cv, verbose=FALSE))
+    return (train(classe ~ ., data=training, method=mxpar, preProcess=c("center", "scale"), trControl=trc_cv, verbose=FALSE))
 }
 
 runModelPCA <- function(mxpar) {
-    return (train(classe ~ ., data=training, method=mxpar, preProcess="pca", trControl=trc_cv, verbose=FALSE))
+    return (train(classe ~ ., data=training, method=mxpar, preProcess=c("center", "scale","pca"), trControl=trc_cv, verbose=FALSE))
 }
 
 models <- list()
@@ -251,8 +272,7 @@ performance
 
 # Results
 - Random forest (rf) classifies correctly 99.5% of observations
-- PCA does not improve results, except neural net from ~40% to 60%
-- Hypothesis: In the case of neural net, dimensionality reduction helps the algorithm more than the information loss hurts, so accuracy goes from ~0.4 to 0.6
+- PCA does not improve results on any method
 
 # Variable importance
 
@@ -308,7 +328,7 @@ pml_write_files(testPrediction)
 ```
 # Conclusion
 
-- Random forest performs very well, other methods (but not all) yield good results
+- Random forest performs extremely well, other methods yield good results
 - We get 99.5% accuracy during cross-validation and 100% in-sample
 - Accuracy expected to be a little less than 99.5% on test data randomly held back from this experiment. 99.5% is an upper bound on a new similarly constructed experiment.
 - Without domain knowledge, we can't be sure how well these results will generalize
